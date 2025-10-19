@@ -13,7 +13,8 @@ const alertCooldown = 6000; // 6s cooldown per symbol
 const axiosTimeout = 8000; // 8s timeout
 const klineLimit = 10;
 const maxConcurrentKlineRequests = 6;
-const maxRequestsPerSecond = 5; // limit để tránh 429
+const maxRequestsPerSecond = 5; // tránh 429
+const messageLifetime = 2 * 60 * 60 * 1000; // 2 tiếng
 
 if (!token || !chatId) {
   console.error('Thiếu TELEGRAM_BOT_TOKEN hoặc TELEGRAM_CHAT_ID trong .env');
@@ -24,6 +25,7 @@ const bot = new TelegramBot(token, { polling: false });
 
 const basePrices = new Map();
 const lastAlertTimes = new Map();
+const sentMessages = []; // Lưu tin nhắn đã gửi để xoá sau
 let binanceSymbols = new Set();
 
 const axiosInstance = axios.create({
@@ -32,7 +34,7 @@ const axiosInstance = axios.create({
 });
 
 /**
- * Fetch Binance symbols (để biết coin nào exclusive trên MEXC)
+ * Fetch Binance symbols
  */
 async function fetchBinanceSymbols() {
   try {
@@ -100,11 +102,7 @@ async function fetchKlinesWithRetry(symbol, retries = 3) {
         await new Promise(r => setTimeout(r, wait));
         continue;
       }
-      if (status === 400) {
-        // symbol invalid, skip quietly
-        // console.warn(`fetchKlines: invalid symbol ${symbol} (status 400), skipping.`);
-        return [];
-      }
+      if (status === 400) return [];
       console.error(`Lỗi fetchKlines ${symbol}:`, err.message);
       return [];
     }
@@ -113,7 +111,7 @@ async function fetchKlinesWithRetry(symbol, retries = 3) {
 }
 
 /**
- * Giới hạn tốc độ thực thi (maxConcurrent + rps)
+ * Giới hạn tốc độ thực thi
  */
 async function mapWithRateLimit(items, fn, concurrency = 8, rps = 6) {
   const results = [];
@@ -146,7 +144,40 @@ async function mapWithRateLimit(items, fn, concurrency = 8, rps = 6) {
 }
 
 /**
- * Kiểm tra 3 nến 1 phút liên tục >2% cùng chiều
+ * Gửi tin nhắn và lưu ID để xoá sau 2 tiếng
+ */
+async function sendMessageWithAutoDelete(message, options) {
+  try {
+    const sent = await bot.sendMessage(chatId, message, options);
+    sentMessages.push({ id: sent.message_id, time: Date.now() });
+  } catch (err) {
+    console.error('Lỗi gửi tin nhắn:', err.message);
+  }
+}
+
+/**
+ * Hàm xoá tin nhắn cũ hơn 2 tiếng
+ */
+async function cleanupOldMessages() {
+  const now = Date.now();
+  const oldMessages = sentMessages.filter(m => now - m.time > messageLifetime);
+  if (!oldMessages.length) return;
+
+  for (const msg of oldMessages) {
+    try {
+      await bot.deleteMessage(chatId, msg.id);
+      console.log(`🗑️ Đã xoá tin nhắn cũ ID ${msg.id}`);
+    } catch (err) {
+      // ignore message already deleted
+    }
+  }
+
+  // Cập nhật danh sách (chỉ giữ tin nhắn chưa hết hạn)
+  sentMessages.splice(0, sentMessages.length, ...sentMessages.filter(m => now - m.time <= messageLifetime));
+}
+
+/**
+ * Check candle streak (3 nến > 2%)
  */
 async function checkCandleStreak(symbol) {
   try {
@@ -192,7 +223,7 @@ async function checkCandleStreak(symbol) {
       const escapeMdV2 = (text) => text.replace(/([_*[\]()~`>#+\-=|{}.!\\])/g, '\\$1');
       const message = `${escapeMdV2(header)}\n\n[${escapeMdV2(symbol)}](${link}) ${emoji} \\(${escapeMdV2(pcts)}\\)`;
 
-      await bot.sendMessage(chatId, message, {
+      await sendMessageWithAutoDelete(message, {
         parse_mode: 'MarkdownV2',
         disable_web_page_preview: true,
       });
@@ -206,7 +237,7 @@ async function checkCandleStreak(symbol) {
 }
 
 /**
- * Kiểm tra biến động cộng dồn >3%
+ * Check cumulative change >3%
  */
 async function processCumulativeAlerts(tickers) {
   for (const ticker of tickers) {
@@ -239,17 +270,14 @@ async function processCumulativeAlerts(tickers) {
       const link = `https://mexc.com/futures/${symbol}?type=swap`;
       const message = `${prefix}${rockets} [${symbol}](${link}) ⚡ ${changePercent.toFixed(2)}% ${dot}\n\`${basePrice.toFixed(6)} → ${currentPrice.toFixed(6)}\`\n${time}`;
 
-      try {
-        await bot.sendMessage(chatId, message, {
-          parse_mode: 'Markdown',
-          disable_web_page_preview: true,
-        });
-        lastAlertTimes.set(symbol, Date.now());
-        basePrices.set(symbol, currentPrice);
-        console.log(`Cumulative alert sent for ${symbol}: ${changePercent.toFixed(2)}%`);
-      } catch (err) {
-        console.error(`Failed to send cumulative alert ${symbol}:`, err.message);
-      }
+      await sendMessageWithAutoDelete(message, {
+        parse_mode: 'Markdown',
+        disable_web_page_preview: true,
+      });
+
+      lastAlertTimes.set(symbol, Date.now());
+      basePrices.set(symbol, currentPrice);
+      console.log(`Cumulative alert sent for ${symbol}: ${changePercent.toFixed(2)}%`);
     }
   }
 }
@@ -269,6 +297,8 @@ async function checkAndAlert() {
 
   const symbols = tickers.map(t => t.symbol);
   await mapWithRateLimit(symbols, checkCandleStreak, maxConcurrentKlineRequests, maxRequestsPerSecond);
+
+  await cleanupOldMessages(); // 🧹 xoá tin nhắn cũ
 }
 
 (async () => {
