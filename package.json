@@ -1,0 +1,28 @@
+{
+  "name": "mexc-surgebot",
+  "version": "1.0.0",
+  "description": "Bot Telegram theo dõi biến động giá coin futures trên MEXC",
+  "main": "bot.js",
+  "scripts": {
+    "start": "node bot.js",
+    "dev": "nodemon bot.js"
+  },
+  "keywords": [
+    "telegram",
+    "bot",
+    "mexc",
+    "crypto"
+  ],
+  "author": "Your Name",
+  "license": "ISC",
+  "dependencies": {
+    "axios": "^1.7.2",
+    "axios-retry": "^4.5.0",
+    "ccxt": "^4.5.11",
+    "dotenv": "^16.4.5",
+    "node-telegram-bot-api": "^0.66.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.4"
+  }
+}
