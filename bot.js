@@ -218,7 +218,7 @@ async function checkCandleStreak(symbol) {
       const emoji = isIncrease ? '🟢' : '🔴';
       const verb = isIncrease ? 'tăng' : 'giảm';
       const pcts = streak.map(p => p.toFixed(2) + '%').join(', ');
-      const header = `${count} nến Min1 liên tiếp ${verb} trên 2%`;
+      const header = `${count} nến Min1 liên tiếp ${verb} trên 1%`;
       const link = `https://mexc.com/futures/${symbol}?type=swap`;
 
       const escapeMdV2 = (text) => text.replace(/([_*[\]()~`>#+\-=|{}.!\\])/g, '\\$1');
