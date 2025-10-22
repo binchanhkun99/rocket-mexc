@@ -190,8 +190,9 @@ async function checkCandleStreak(symbol) {
 
     for (let i = recent.length - 1; i >= 0; i--) {
       const pct = recent[i].pct;
-      const isUp = pct > 2;
-      const isDown = pct < -2;
+      const isUp = pct > 1;
+      const isDown = pct < -1;
+
 
       if (!direction) {
         if (isUp) {
