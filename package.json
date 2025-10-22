@@ -3,6 +3,8 @@
   "version": "1.0.0",
   "description": "Bot Telegram theo dõi biến động giá coin futures trên MEXC",
   "main": "bot.js",
+  "type": "module",
+
   "scripts": {
     "start": "node bot.js",
     "dev": "nodemon bot.js"
