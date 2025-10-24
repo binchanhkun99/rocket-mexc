@@ -25,7 +25,7 @@ const bot = new TelegramBot(token, { polling: false });
 
 const basePrices = new Map();
 const lastAlertTimes = new Map();
-const sentMessages = []; // Lưu tin nhắn đã gửi để xoá sau
+const sentMessages = [];
 let binanceSymbols = new Set();
 
 const axiosInstance = axios.create({
@@ -88,7 +88,7 @@ async function fetchKlinesWithRetry(symbol, retries = 3) {
           const candleStart = t * 1000;
           const candleEnd = candleStart + 60000;
           const isComplete = Date.now() >= candleEnd;
-          return { time: candleStart, pct: isComplete ? pct : NaN };
+          return { time: candleStart, open: o, close: c, pct: isComplete ? pct : NaN };
         }).filter(k => !isNaN(k.pct));
         return klines.sort((a, b) => a.time - b.time);
       }
@@ -172,12 +172,11 @@ async function cleanupOldMessages() {
     }
   }
 
-  // Cập nhật danh sách (chỉ giữ tin nhắn chưa hết hạn)
   sentMessages.splice(0, sentMessages.length, ...sentMessages.filter(m => now - m.time <= messageLifetime));
 }
 
 /**
- * Check candle streak (3 nến > 2%)
+ * Check candle streak (3 nến > 1%)
  */
 async function checkCandleStreak(symbol) {
   try {
@@ -193,18 +192,17 @@ async function checkCandleStreak(symbol) {
       const isUp = pct > 1;
       const isDown = pct < -1;
 
-
       if (!direction) {
         if (isUp) {
           direction = 'up';
-          streak.unshift(pct);
+          streak.unshift(recent[i]);
         } else if (isDown) {
           direction = 'down';
-          streak.unshift(pct);
+          streak.unshift(recent[i]);
         } else break;
       } else {
         if ((direction === 'up' && isUp) || (direction === 'down' && isDown)) {
-          streak.unshift(pct);
+          streak.unshift(recent[i]);
         } else break;
       }
     }
@@ -217,12 +215,26 @@ async function checkCandleStreak(symbol) {
       const isIncrease = direction === 'up';
       const emoji = isIncrease ? '🟢' : '🔴';
       const verb = isIncrease ? 'tăng' : 'giảm';
-      const pcts = streak.map(p => p.toFixed(2) + '%').join(', ');
-      const header = `${count} nến Min1 liên tiếp ${verb} trên 1%`;
-      const link = `https://mexc.com/futures/${symbol}?type=swap`;
+      const pcts = streak.map(k => k.pct.toFixed(2) + '%').join(', ');
 
-      const escapeMdV2 = (text) => text.replace(/([_*[\]()~`>#+\-=|{}.!\\])/g, '\\$1');
-      const message = `${escapeMdV2(header)}\n\n[${escapeMdV2(symbol)}](${link}) ${emoji} \\(${escapeMdV2(pcts)}\\)`;
+      // giá trước và sau
+      const openPrice = streak[0].open;
+      const closePrice = streak.at(-1).close;
+      const totalChange = ((closePrice - openPrice) / openPrice * 100).toFixed(2);
+
+      // kiểm tra nếu chỉ có ở MEXC
+      const binanceSymbol = symbol.replace('_USDT', 'USDT');
+      const isMexcExclusive = !binanceSymbols.has(binanceSymbol);
+      const prefix = isMexcExclusive ? '🅼 ' : '';
+
+      const header = `${prefix}${count} nến M1 liên tiếp ${verb} trên 1%`;
+      const link = `https://mexc.com/futures/${symbol}?type=swap`;
+const escapeMdV2 = (text) => text.replace(/([_*\[\]()~`>#+=\-|{}.!\\])/g, '\\$1');
+
+      const message =
+        `${escapeMdV2(header)}\n` +
+        `[${escapeMdV2(symbol)}](${link}) ${emoji} \\(${escapeMdV2(pcts)}\\)\n` +
+        `\`${openPrice.toFixed(6)} → ${closePrice.toFixed(6)} (${totalChange}%)\``;
 
       await sendMessageWithAutoDelete(message, {
         parse_mode: 'MarkdownV2',
@@ -259,7 +271,8 @@ async function processCumulativeAlerts(tickers) {
 
       const isIncrease = currentPrice > basePrice;
       const dot = isIncrease ? '🟢' : '🔴';
-      const rockets = changePercent > 50 ? '🚀🚀🚀' :
+      const rockets =
+        changePercent > 50 ? '🚀🚀🚀' :
         changePercent > 25 ? '🚀🚀' :
         changePercent > 10 ? '🚀' : '';
 
@@ -269,7 +282,9 @@ async function processCumulativeAlerts(tickers) {
 
       const time = new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
       const link = `https://mexc.com/futures/${symbol}?type=swap`;
-      const message = `${prefix}${rockets} [${symbol}](${link}) ⚡ ${changePercent.toFixed(2)}% ${dot}\n\`${basePrice.toFixed(6)} → ${currentPrice.toFixed(6)}\`\n${time}`;
+      const message =
+        `${prefix}${rockets} [${symbol}](${link}) ⚡ ${changePercent.toFixed(2)}% ${dot}\n` +
+        `\`${basePrice.toFixed(6)} → ${currentPrice.toFixed(6)}\`\n${time}`;
 
       await sendMessageWithAutoDelete(message, {
         parse_mode: 'Markdown',
@@ -299,7 +314,7 @@ async function checkAndAlert() {
   const symbols = tickers.map(t => t.symbol);
   await mapWithRateLimit(symbols, checkCandleStreak, maxConcurrentKlineRequests, maxRequestsPerSecond);
 
-  await cleanupOldMessages(); // 🧹 xoá tin nhắn cũ
+  await cleanupOldMessages();
 }
 
 (async () => {
